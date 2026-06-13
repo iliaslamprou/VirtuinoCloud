@@ -1,0 +1,20 @@
+# Datatypes
+VirtuinoCloud	KEYWORD1
+VirtuinoResult	KEYWORD1
+
+# Methods
+read	KEYWORD2
+readHistory	KEYWORD2
+write	KEYWORD2
+beginWrite	KEYWORD2
+add	KEYWORD2
+send	KEYWORD2
+
+# Properties
+ok	LITERAL1
+value	LITERAL1
+time	LITERAL1
+asFloat	KEYWORD2
+asInt	KEYWORD2
+asString	KEYWORD2
+asJson	KEYWORD2
