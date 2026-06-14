@@ -64,12 +64,11 @@ VirtuinoResult VirtuinoCloud::read(const char* device, const char* field) {
         "/api/data/device/%s/field/%s?latest=true", device, field);
 
     String resp = _get(path);
-    if (!resp.length()) { Serial.println("[VC] read: no response"); return r; }
-    Serial.print("[VC] read response: "); Serial.println(resp);
+    if (!resp.length()) return r;
 
     StaticJsonDocument<512> doc;
-    if (deserializeJson(doc, resp)) { Serial.println("[VC] read: JSON parse error"); return r; }
-    if (!doc["success"])            { Serial.print("[VC] read: success=false, error="); Serial.println(doc["error"] | ""); return r; }
+    if (deserializeJson(doc, resp)) return r;
+    if (!doc["success"])            return r;
 
     JsonObject entry = doc["latest_entry"];
     if (entry.isNull()) return r;   // field exists but has no data yet
