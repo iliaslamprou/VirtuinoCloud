@@ -2,7 +2,7 @@
   VirtuinoCloud — Example 03: Read latest value
   -----------------------------------------------
   Reads a relay state from the Virtuino dashboard and switches a GPIO pin.
-  The dashboard toggle widget writes 0 or 1 to the "relay1" field.
+  The dashboard toggle widget writes 0 or 1 to the field "esp32/relay1".
   This sketch polls the field every 5 seconds and mirrors the state on a GPIO.
 
   SUPPORTED BOARDS
@@ -15,11 +15,11 @@
     ArduinoHttpClient  (WiFiNINA boards only)
 
   CONSOLE SETUP
-    Device field needed: "relay1"
-    Dashboard: add a Toggle widget connected to field "relay1"
+    Field needed (Console → Fields): "esp32/relay1"
+    Dashboard: add a Toggle widget connected to field "esp32/relay1"
 
   RESULT struct — all members available after a successful read:
-    r.ok          bool   — false if network error or field not found
+    r.ok          bool   — false if network error, no such field or no value yet
     r.asFloat()   float  — e.g. 1.0
     r.asInt()     int    — e.g. 1  (use this for ON/OFF)
     r.asString()  String — e.g. "1"
@@ -36,7 +36,6 @@
 const char* SSID     = "YOUR_WIFI_SSID";
 const char* PASSWORD = "YOUR_WIFI_PASSWORD";
 const char* API_KEY  = "YOUR_API_KEY";
-const char* DEVICE   = "YOUR_DEVICE_ID";
 // ─────────────────────────────────────────────────────────────────────────────
 
 // GPIO connected to relay module (HIGH = ON, LOW = OFF)
@@ -56,8 +55,8 @@ void setup() {
 }
 
 void loop() {
-    // Read the latest value of field "relay1" from the cloud
-    VirtuinoResult r = cloud.read(DEVICE, "relay1");
+    // Read the latest value of the field "esp32/relay1"
+    VirtuinoResult r = cloud.read("esp32/relay1");
 
     if (r.ok) {
         // asInt() returns 1 when the dashboard toggle is ON, 0 when OFF
@@ -68,8 +67,11 @@ void loop() {
 
         // r.asJson() → {"value":"1","time":"2024-06-15T14:30:00Z"}
         // Serial.println(r.asJson());
+    } else if (cloud.lastStatus() == 200) {
+        Serial.println("relay1 has no value yet");
     } else {
-        Serial.println("Read failed — check WiFi, API key and device/field names");
+        // 404 = no field with that name, 403 = wrong API key, 0 or negative = no connection
+        Serial.print("Read failed — HTTP "); Serial.println(cloud.lastStatus());
     }
 
     delay(5000);    // poll every 5 seconds

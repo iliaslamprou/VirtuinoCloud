@@ -15,9 +15,9 @@
 
   CONSOLE SETUP  (do this before uploading)
     1. Log in at virtuino.com
-    2. Console → Devices → create a device, add a field named "temperature"
+    2. Console → Fields → create a field named "esp32/temperature"
     3. Console → API & Connections → copy your API key
-    4. Fill in SSID, PASSWORD, API_KEY and DEVICE below
+    4. Fill in SSID, PASSWORD and API_KEY below
 */
 
 #include <WiFi.h>              // ESP32
@@ -29,13 +29,15 @@
 const char* SSID     = "YOUR_WIFI_SSID";
 const char* PASSWORD = "YOUR_WIFI_PASSWORD";
 const char* API_KEY  = "YOUR_API_KEY";    // Console → API & Connections
-const char* DEVICE   = "YOUR_DEVICE_ID"; // must match device name in Console exactly
 // ─────────────────────────────────────────────────────────────────────────────
 
 VirtuinoCloud cloud(API_KEY);
 
 void setup() {
     Serial.begin(115200);
+
+    // Optional: the name this board gets in My Virtuino World
+    cloud.setClientId("esp32-01");
 
     // Connect to WiFi
     WiFi.begin(SSID, PASSWORD);
@@ -47,20 +49,23 @@ void setup() {
 void loop() {
     float temperature = 23.4;   // replace with a real sensor read
 
-    // Basic write — server records the time of arrival as timestamp
-    bool ok = cloud.write(DEVICE, "temperature", temperature);
+    // Basic write — the field's full name, exactly as in Console → Fields.
+    // The server records the time of arrival as timestamp.
+    bool ok = cloud.write("esp32/temperature", temperature);
 
     // With publish=true the value is also pushed to the MQTT broker,
     // so live dashboard widgets update in real time (Essential+ plan)
-    // bool ok = cloud.write(DEVICE, "temperature", temperature, true);
+    // bool ok = cloud.write("esp32/temperature", temperature, true);
 
     // With an explicit ISO 8601 UTC timestamp (useful for batch/offline uploads)
-    // bool ok = cloud.write(DEVICE, "temperature", temperature, true, "2024-06-15T14:30:00Z");
+    // bool ok = cloud.write("esp32/temperature", temperature, true, "2024-06-15T14:30:00Z");
 
     if (ok) {
         Serial.print("Uploaded: "); Serial.println(temperature);
     } else {
-        Serial.println("Upload failed — check WiFi and API key");
+        // lastStatus(): 404 = no field with that name, 403 = read-only or wrong API key,
+        // 0 or negative = no connection
+        Serial.print("Upload failed — HTTP "); Serial.println(cloud.lastStatus());
     }
 
     delay(30000);   // upload every 30 seconds

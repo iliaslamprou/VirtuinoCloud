@@ -37,6 +37,22 @@ Read and write field data over HTTPS with a simple, unified API.
 
 ---
 
+## Field names
+
+A field's name is its full topic, exactly as it appears in **Console → Fields** —
+for example `esp32/temperature`. Create every field in the Console first; the
+server does not create fields on its own.
+
+Every method accepts the full name. Methods that take a separate `path` and
+`field` join them with a `/`, so these two lines write to the same field:
+
+```cpp
+cloud.write("esp32/temperature", 23.4);
+cloud.write("esp32", "temperature", 23.4);
+```
+
+---
+
 ## Quick start
 
 ```cpp
@@ -48,14 +64,15 @@ VirtuinoCloud cloud("YOUR_API_KEY");
 void setup() {
     WiFi.begin("ssid", "password");
     while (WiFi.status() != WL_CONNECTED) delay(500);
+    cloud.setClientId("esp32-kitchen");   // optional: name in My Virtuino World
 }
 
 void loop() {
     // Write one field
-    cloud.write("my-device", "temperature", 23.4);
+    cloud.write("esp32/temperature", 23.4);
 
     // Read one field
-    VirtuinoResult r = cloud.read("my-device", "relay1");
+    VirtuinoResult r = cloud.read("esp32/relay1");
     if (r.ok) digitalWrite(LED_PIN, r.asInt());
 
     delay(10000);
@@ -69,9 +86,9 @@ void loop() {
 ### Read latest value
 
 ```cpp
-VirtuinoResult r = cloud.read("device", "field");
+VirtuinoResult r = cloud.read("esp32/relay1");
 
-r.ok           // bool   — false on network or parse error
+r.ok           // bool   — false on network error, unknown field or no value yet
 r.asFloat()    // float  — e.g. 23.4
 r.asInt()      // int    — e.g. 23
 r.asString()   // String — e.g. "23.4"
@@ -82,9 +99,9 @@ r.asJson()     // String — {"value":"23.4","time":"2024-06-15T14:30:00Z"}
 ### Read history
 
 ```cpp
-// Returns a JSON array String with the last N records
-String h = cloud.readHistory("device", "field", 50);
-// → [{"time":"2024-06-15T14:30:00Z","value":"23.4"}, ...]
+// Returns a JSON array String with the last N records, newest first
+String h = cloud.readHistory("esp32/temperature", 50);
+// → [{"time":"2024-06-15T14:30:00Z","value":"23.4","source":"HTTP"}, ...]
 
 // Parse with ArduinoJson if needed:
 DynamicJsonDocument doc(8192);
@@ -99,9 +116,9 @@ for (JsonObject rec : doc.as<JsonArray>()) {
 ### Write single field
 
 ```cpp
-cloud.write("device", "field", 23.4);                         // basic
-cloud.write("device", "field", 23.4, true);                   // + publish to MQTT
-cloud.write("device", "field", 23.4, true, "2024-06-15T14:30:00Z"); // + timestamp
+cloud.write("esp32/temperature", 23.4);                                // basic
+cloud.write("esp32/temperature", 23.4, true);                          // + publish to MQTT
+cloud.write("esp32/temperature", 23.4, true, "2024-06-15T14:30:00Z");  // + timestamp
 ```
 
 Returns `true` if the server responded with HTTP 200.
@@ -111,15 +128,28 @@ Returns `true` if the server responded with HTTP 200.
 ### Block write — multiple fields in one HTTP request
 
 ```cpp
-cloud.beginWrite("device");
-cloud.add("temperature", 23.4);
+cloud.beginWrite("esp32");              // path, joined to every field below
+cloud.add("temperature", 23.4);         // → esp32/temperature
 cloud.add("humidity",    65.0, true);   // publish this field
 cloud.add("pressure",    1013.0);
 cloud.add("time", "2024-06-15T14:30:00Z");  // optional shared timestamp
 bool ok = cloud.send();                 // sends ONE HTTP request for all fields
 ```
 
+Call `beginWrite()` with no path to give full names to `add()` instead.
 `send()` resets the field list automatically so `beginWrite` can be called again next loop.
+
+### Board name and diagnostics
+
+```cpp
+cloud.setClientId("esp32-kitchen");   // name shown in My Virtuino World (1–64 chars: A-Z a-z 0-9 . _ : -)
+
+if (!cloud.write("esp32/temperature", 23.4)) {
+    Serial.println(cloud.lastStatus());
+    // 404 = no field with that name   403 = read-only or wrong API key
+    // 429 = too many writes            0 or negative = no connection
+}
+```
 
 ---
 
@@ -139,7 +169,20 @@ bool ok = cloud.send();                 // sends ONE HTTP request for all fields
 
 Before uploading any sketch:
 1. Log in at [virtuino.com](https://virtuino.com)
-2. **Console → Devices** — create a device and add its fields
-3. **Console → API & Connections** — copy your API key
+2. **Console → Fields** — create the fields your sketch uses, with their full names (e.g. `esp32/temperature`)
+3. **Console → API & Connections** — copy your API key (it must be **Read & Write** to upload values)
 
-The `device` string in your sketch must match the device name in the Console exactly.
+The **Debug Monitor** in the Console shows every request your board makes, live — including the reason when one is rejected.
+
+---
+
+## Changes
+
+**1.1.0**
+- Full field names everywhere: `write("esp32/temperature", …)`, `read("esp32/relay1")`, `readHistory("esp32/temperature", n)`, `beginWrite()` with an optional path.
+- Fields with one-word names or several levels (`farm/greenhouse/temp`) can now be read and written.
+- `setClientId()` — name the board in My Virtuino World.
+- `lastStatus()` — HTTP status of the last request, for diagnostics.
+- WiFiNINA boards: the server reply is always read, so the next request starts clean.
+- Examples no longer use `Serial.printf`, which does not exist on Uno WiFi Rev2 and MKR boards.
+- Sketches written for 1.0.0 keep working unchanged.

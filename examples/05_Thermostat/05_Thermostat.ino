@@ -3,15 +3,15 @@
   ------------------------------------------------------------
   Demonstrates using read() and beginWrite/add/send together in one loop:
 
-    1. Read "setpoint" from the dashboard (slider widget sets the target temp)
+    1. Read "esp32/setpoint" from the dashboard (slider widget sets the target temp)
     2. Measure actual temperature with a DHT22
     3. Control a heater relay using bang-bang logic with 0.5°C hysteresis
-    4. Upload "temperature" and "heater_state" in ONE HTTP request
+    4. Upload "esp32/temperature" and "esp32/heater_state" in ONE HTTP request
 
-  DASHBOARD SETUP  (Console → Devices → your device → add these fields)
-    setpoint     — written by a Slider widget  (range 15–30)
-    temperature  — displayed on a Gauge or Chart widget
-    heater_state — displayed on an LED widget  (0 = OFF, 1 = ON)
+  CONSOLE SETUP  (Console → Fields → add these fields)
+    esp32/setpoint     — written by a Slider widget  (range 15–30)
+    esp32/temperature  — displayed on a Gauge or Chart widget
+    esp32/heater_state — displayed on an LED widget  (0 = OFF, 1 = ON)
 
   BANG-BANG LOGIC
     heater turns ON  when actual < setpoint − 0.5°C
@@ -38,7 +38,6 @@
 const char* SSID     = "YOUR_WIFI_SSID";
 const char* PASSWORD = "YOUR_WIFI_PASSWORD";
 const char* API_KEY  = "YOUR_API_KEY";
-const char* DEVICE   = "YOUR_DEVICE_ID";
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Hardware pins — adjust for your board:
@@ -49,11 +48,13 @@ const int HEATER  = 26;   // relay module controlling the heater (HIGH = ON)
 
 DHT dht(DHT_PIN, DHT22);
 VirtuinoCloud cloud(API_KEY);
+float setpoint = 22.0f;   // kept between loops: a failed read keeps the last good value
 
 void setup() {
     Serial.begin(115200);
     dht.begin();
     pinMode(HEATER, OUTPUT);
+    cloud.setClientId("thermostat-01");   // optional: name in My Virtuino World
 
     WiFi.begin(SSID, PASSWORD);
     Serial.print("Connecting to WiFi");
@@ -63,9 +64,9 @@ void setup() {
 
 void loop() {
     // ── Step 1: read setpoint from dashboard ─────────────────────────────────
-    // If the read fails (no WiFi, field not found, etc.) use 22°C as default
-    VirtuinoResult sp = cloud.read(DEVICE, "setpoint");
-    float setpoint = sp.ok ? sp.asFloat() : 22.0f;
+    // If the read fails (no WiFi, no value yet, ...) keep the last setpoint
+    VirtuinoResult sp = cloud.read("esp32/setpoint");
+    if (sp.ok) setpoint = sp.asFloat();
 
     // ── Step 2: measure actual temperature ───────────────────────────────────
     float actual = dht.readTemperature();
@@ -82,16 +83,17 @@ void loop() {
     digitalWrite(HEATER, heaterOn ? HIGH : LOW);
 
     // ── Step 4: upload both measurements in one HTTP request ──────────────────
+    // "esp32" is the path → esp32/temperature, esp32/heater_state
     // publish=true → values appear immediately on live dashboard widgets
-    cloud.beginWrite(DEVICE);
+    cloud.beginWrite("esp32");
     cloud.add("temperature",  actual,                true);
     cloud.add("heater_state", heaterOn ? 1.0f : 0.0f, true);
     bool ok = cloud.send();
 
-    Serial.printf("%s  SP: %.1f°C  Actual: %.1f°C  Heater: %s\n",
-                  ok ? "OK  " : "FAIL",
-                  setpoint, actual,
-                  heaterOn ? "ON" : "OFF");
+    Serial.print(ok ? "OK    " : "FAIL  ");
+    Serial.print("SP: ");      Serial.print(setpoint, 1);
+    Serial.print(" C  Actual: "); Serial.print(actual, 1);
+    Serial.print(" C  Heater: "); Serial.println(heaterOn ? "ON" : "OFF");
 
     delay(10000);   // run control loop every 10 seconds
 }

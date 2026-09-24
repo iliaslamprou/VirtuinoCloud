@@ -24,13 +24,20 @@
  *
  *   VirtuinoCloud cloud("YOUR_API_KEY");
  *
- *   cloud.write("my-device", "temperature", 23.4);
+ *   cloud.write("esp32/temperature", 23.4);
  *
- *   VirtuinoResult r = cloud.read("my-device", "relay1");
+ *   VirtuinoResult r = cloud.read("esp32/relay1");
  *   if (r.ok) digitalWrite(PIN, r.asInt());
  *
+ * FIELD NAMES
+ * ───────────
+ *   A field's name is its full topic, exactly as in Console → Fields —
+ *   for example "esp32/temperature". Create every field in the Console
+ *   before uploading; the server does not create fields on its own.
+ *   Methods that take (path, field) join them with a "/":
+ *   cloud.write("esp32", "temperature", 23.4) writes to "esp32/temperature".
+ *
  * API KEY: Console → API & Connections
- * DEVICES: Console → Devices  (create device + fields before uploading)
  */
 
 #ifndef VIRTUINO_CLOUD_H
@@ -38,6 +45,8 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+
+#define VIRTUINO_CLOUD_VERSION "1.1.0"
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Board detection — selects the correct HTTP backend automatically.
@@ -67,7 +76,11 @@
       defined(ARDUINO_SAMD_NANO_33_IOT)   || \
       defined(ARDUINO_NANO_RP2040_CONNECT)
     // WiFiNINA boards: uses ArduinoHttpClient + WiFiSSLClient
-    // Install ArduinoHttpClient from Library Manager before compiling.
+    // Install ArduinoHttpClient (and WiFiNINA) from Library Manager before compiling.
+    // WiFiNINA.h MUST be included here: VirtuinoCloud.cpp is compiled on its own
+    // and never sees the sketch's includes. Without it WiFiSSLClient is unknown and
+    // the library does not compile on these boards at all (the case up to 1.0.0).
+    #include <WiFiNINA.h>
     #include <ArduinoHttpClient.h>
     #define VC_BOARD_WIFININA
 
@@ -81,6 +94,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 #define VC_MAX_FIELDS  16          // maximum fields per beginWrite / send block
+#define VC_NAME_LEN    128         // longest full field name ("path/field")
 #define VC_API_HOST    "api.virtuino.com"
 #define VC_API_BASE    "https://" VC_API_HOST
 
@@ -114,33 +128,38 @@ public:
     // apiKey — copy from Console → API & Connections
     explicit VirtuinoCloud(const char* apiKey);
 
+    // Optional: a name for this board, e.g. "esp32-kitchen" (1–64 characters
+    // from A-Z a-z 0-9 . _ : -). It is sent with every write, so the board
+    // appears under this name in My Virtuino World.
+    void setClientId(const char* clientId);
+
+    // HTTP status of the last request: 200 = OK, 404 = no field with that
+    // name, 403 = read-only API key or wrong key, 429 = too many writes,
+    // 0 or negative = no connection. Useful when read() or write() fail.
+    int lastStatus() const { return _last; }
+
     // ── Read ─────────────────────────────────────────────────────────
-
-    // Read the latest stored value of one field.
-    // Returns a VirtuinoResult; check .ok before using.
     //
-    // Example:
-    //   VirtuinoResult r = cloud.read("my-device", "temperature");
+    // Read the latest stored value of one field. Check .ok before using.
+    //
+    //   VirtuinoResult r = cloud.read("esp32/temperature");
     //   if (r.ok) Serial.println(r.asFloat());
-    VirtuinoResult read(const char* device, const char* field);
+    //
+    //   cloud.read("esp32", "temperature")   // same field, path + name
+    VirtuinoResult read(const char* field);
+    VirtuinoResult read(const char* path, const char* field);
 
-    // Fetch the last N records of one field as a JSON array String.
-    // Returns: [{"time":"...","value":"23.4"}, {"time":"...","value":"23.1"}, ...]
+    // Fetch the last N records of one field as a JSON array String:
+    //   [{"time":"...","value":"23.4","source":"HTTP"}, ...]   (newest first)
     // Returns "[]" on network error or if the field has no data.
+    // Keep count ≤ 50 on ESP8266 to avoid running out of RAM. Server maximum: 5000.
     //
-    // Parse the result with ArduinoJson if you need to process individual records.
-    // Keep count ≤ 50 on ESP8266 to avoid running out of RAM.
-    // Maximum count accepted by the server: 5000.
-    //
-    // Example:
-    //   String h = cloud.readHistory("my-device", "temperature", 50);
-    //   DynamicJsonDocument doc(8192);
-    //   deserializeJson(doc, h);
-    //   for (JsonObject rec : doc.as<JsonArray>()) { ... }
-    String readHistory(const char* device, const char* field, int count);
+    //   String h = cloud.readHistory("esp32/temperature", 50);
+    String readHistory(const char* field, int count);
+    String readHistory(const char* path, const char* field, int count);
 
     // ── Write single field ────────────────────────────────────────────
-
+    //
     // Upload one field value. Returns true on HTTP 200.
     //
     // publish  — if true, the value is also pushed to the MQTT broker
@@ -148,29 +167,32 @@ public:
     // ts       — optional ISO 8601 UTC timestamp, e.g. "2024-06-15T14:30:00Z".
     //            If omitted the server records the time of arrival.
     //
-    // Examples:
-    //   cloud.write("my-device", "temperature", 23.4);
-    //   cloud.write("my-device", "temperature", 23.4, true);
-    //   cloud.write("my-device", "temperature", 23.4, true, "2024-06-15T14:30:00Z");
-    bool write(const char* device, const char* field, float value,
+    //   cloud.write("esp32/temperature", 23.4);
+    //   cloud.write("esp32/temperature", 23.4, true);
+    //   cloud.write("esp32/temperature", 23.4, true, "2024-06-15T14:30:00Z");
+    //   cloud.write("esp32", "temperature", 23.4);   // same field, path + name
+    bool write(const char* field, float value,
+               bool publish = false, const char* ts = nullptr);
+    bool write(const char* path, const char* field, float value,
                bool publish = false, const char* ts = nullptr);
 
     // ── Block write ───────────────────────────────────────────────────
     //
     // Queues multiple fields and sends them all in ONE HTTP request.
-    // This avoids making N separate requests when you have N fields to upload.
     //
-    // Usage:
-    //   cloud.beginWrite("my-device");
-    //   cloud.add("temperature", 23.4);
-    //   cloud.add("humidity",    65.0, true);  // publish this field to MQTT
+    //   cloud.beginWrite("esp32");            // optional path, joined to every field
+    //   cloud.add("temperature", 23.4);       // → esp32/temperature
+    //   cloud.add("humidity",    65.0, true); // publish this field to MQTT
     //   cloud.add("time", "2024-06-15T14:30:00Z");  // optional shared timestamp
     //   bool ok = cloud.send();
     //
+    //   cloud.beginWrite();                   // no path: give full names to add()
+    //   cloud.add("esp32/temperature", 23.4);
+    //
     // send() resets the field list automatically — call beginWrite() again next loop.
 
-    // Start a new block for the given device. Clears any previously queued fields.
-    VirtuinoCloud& beginWrite(const char* device);
+    // Start a new block. Clears any previously queued fields.
+    VirtuinoCloud& beginWrite(const char* path = nullptr);
 
     // Add a numeric field to the current block.
     // publish=true → also push this field to the MQTT broker (Essential+ plan).
@@ -187,22 +209,28 @@ public:
 
 private:
     const char* _key;
+    const char* _clientId;   // optional, set by setClientId()
+    int         _last;       // HTTP status of the last request
 
     // Block-write state
-    const char* _bDevice;    // device set by beginWrite()
+    const char* _bPath;      // optional path set by beginWrite()
     char        _bTime[32];  // optional timestamp set by add("time",...)
     int         _fCount;     // number of queued fields
 
     struct _Field {
-        char  name[32];    // field name
+        char  name[40];    // field name (relative to the path, or full name), max 39
+                           // chars — kept small for Uno WiFi Rev2 (6 KB RAM)
         float numVal;      // numeric value  (used when isStr == false)
         char  strVal[32];  // string value   (used when isStr == true)
         bool  isStr;       // which value slot to use when serialising JSON
         bool  publish;     // push to MQTT broker
     } _fields[VC_MAX_FIELDS];
 
+    // "path" + "/" + "field", or just "field" when path is empty.
+    static void _join(char* out, size_t n, const char* path, const char* field);
+
     // Internal HTTP helpers — implemented per board in VirtuinoCloud.cpp.
-    // path = "/api/data/device/X/field/Y?..."  (no host, no scheme)
+    // path = "/api/data/field/esp32/temperature?..."  (no host, no scheme)
     int    _post(const char* body);
     String _get(const char* path);
 };

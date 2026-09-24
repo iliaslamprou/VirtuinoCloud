@@ -17,7 +17,7 @@
     ArduinoHttpClient  (WiFiNINA boards only)
 
   CONSOLE SETUP
-    Device fields needed: "temperature", "humidity"
+    Fields needed (Console → Fields): "esp32/temperature", "esp32/humidity"
 */
 
 #include <WiFi.h>              // ESP32
@@ -30,7 +30,6 @@
 const char* SSID     = "YOUR_WIFI_SSID";
 const char* PASSWORD = "YOUR_WIFI_PASSWORD";
 const char* API_KEY  = "YOUR_API_KEY";
-const char* DEVICE   = "YOUR_DEVICE_ID";
 // ─────────────────────────────────────────────────────────────────────────────
 
 // DHT22 sensor — change pin to D4 on ESP8266, 2 on WiFiNINA boards
@@ -42,6 +41,7 @@ VirtuinoCloud cloud(API_KEY);
 void setup() {
     Serial.begin(115200);
     dht.begin();
+    cloud.setClientId("esp32-01");   // optional: name in My Virtuino World
 
     WiFi.begin(SSID, PASSWORD);
     Serial.print("Connecting to WiFi");
@@ -59,8 +59,10 @@ void loop() {
         return;
     }
 
-    // beginWrite starts a new block for the given device
-    cloud.beginWrite(DEVICE);
+    // beginWrite starts a new block. "esp32" is the path: it is joined to every
+    // field below with a "/", so these go to esp32/temperature and esp32/humidity.
+    // (Or call beginWrite() with no path and add() the full names.)
+    cloud.beginWrite("esp32");
 
     // add() queues a field — does NOT send yet
     // publish=true → also push to MQTT broker for live dashboard widgets
@@ -74,9 +76,10 @@ void loop() {
     bool ok = cloud.send();
 
     if (ok) {
-        Serial.printf("Uploaded — T: %.1f°C  H: %.1f%%\n", temperature, humidity);
+        Serial.print("Uploaded — T: "); Serial.print(temperature, 1);
+        Serial.print(" C  H: ");        Serial.print(humidity, 1); Serial.println(" %");
     } else {
-        Serial.println("Upload failed");
+        Serial.print("Upload failed — HTTP "); Serial.println(cloud.lastStatus());
     }
 
     delay(30000);   // upload every 30 seconds

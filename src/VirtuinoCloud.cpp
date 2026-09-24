@@ -13,6 +13,7 @@
  * All three backends expose the same two private methods:
  *   int    _post(body)  — POST JSON body, returns HTTP status code
  *   String _get(path)   — GET with x-api-key header, returns response body
+ * Both store the HTTP status in _last (see lastStatus()).
  */
 
 #include "VirtuinoCloud.h"
@@ -40,28 +41,44 @@ String VirtuinoResult::asJson() {
 
 
 // ═══════════════════════════════════════════════════════════════════════
-//  Constructor
+//  Constructor / settings
 // ═══════════════════════════════════════════════════════════════════════
 
 VirtuinoCloud::VirtuinoCloud(const char* apiKey) : _key(apiKey) {
-    _bDevice  = nullptr;
+    _clientId = nullptr;
+    _last     = 0;
+    _bPath    = nullptr;
     _bTime[0] = '\0';
     _fCount   = 0;
+}
+
+void VirtuinoCloud::setClientId(const char* clientId) {
+    _clientId = (clientId && clientId[0]) ? clientId : nullptr;
+}
+
+void VirtuinoCloud::_join(char* out, size_t n, const char* path, const char* field) {
+    if (path && path[0]) snprintf(out, n, "%s/%s", path, field ? field : "");
+    else                 strlcpy(out, field ? field : "", n);
 }
 
 
 // ═══════════════════════════════════════════════════════════════════════
 //  read()
-//  GET /api/data/device/{device}/field/{field}?latest=true
-//  Response: { success, latest_entry: { value, time, device, source } }
+//  GET /api/data/field/{full/name}?latest=true
+//  Response: { success, field, latest_entry: { time, value, source } | null }
 // ═══════════════════════════════════════════════════════════════════════
 
-VirtuinoResult VirtuinoCloud::read(const char* device, const char* field) {
+VirtuinoResult VirtuinoCloud::read(const char* path, const char* field) {
+    char name[VC_NAME_LEN];
+    _join(name, sizeof(name), path, field);
+    return read(name);
+}
+
+VirtuinoResult VirtuinoCloud::read(const char* field) {
     VirtuinoResult r;
 
-    char path[160];
-    snprintf(path, sizeof(path),
-        "/api/data/device/%s/field/%s?latest=true", device, field);
+    char path[VC_NAME_LEN + 40];
+    snprintf(path, sizeof(path), "/api/data/field/%s?latest=true", field);
 
     String resp = _get(path);
     if (!resp.length()) return r;
@@ -82,15 +99,20 @@ VirtuinoResult VirtuinoCloud::read(const char* device, const char* field) {
 
 // ═══════════════════════════════════════════════════════════════════════
 //  readHistory()
-//  GET /api/data/device/{device}/field/{field}?limit={count}
-//  Response: { success, count, data: [{time, value, device, source}, ...] }
+//  GET /api/data/field/{full/name}?limit={count}
+//  Response: { success, field, count, data: [{time, value, source}, ...] }
 //  Returns only the "data" array as a JSON string.
 // ═══════════════════════════════════════════════════════════════════════
 
-String VirtuinoCloud::readHistory(const char* device, const char* field, int count) {
-    char path[160];
-    snprintf(path, sizeof(path),
-        "/api/data/device/%s/field/%s?limit=%d", device, field, count);
+String VirtuinoCloud::readHistory(const char* path, const char* field, int count) {
+    char name[VC_NAME_LEN];
+    _join(name, sizeof(name), path, field);
+    return readHistory(name, count);
+}
+
+String VirtuinoCloud::readHistory(const char* field, int count) {
+    char path[VC_NAME_LEN + 40];
+    snprintf(path, sizeof(path), "/api/data/field/%s?limit=%d", field, count);
 
     String resp = _get(path);
     if (!resp.length()) return "[]";
@@ -110,20 +132,26 @@ String VirtuinoCloud::readHistory(const char* device, const char* field, int cou
 // ═══════════════════════════════════════════════════════════════════════
 //  write()
 //  POST /api/data/write
-//  Body: { api_key, device_name, field, value [, publish] [, time] }
+//  Body: { api_key, [client_id,] field: "full/name", value [, publish] [, time] }
 // ═══════════════════════════════════════════════════════════════════════
 
-bool VirtuinoCloud::write(const char* device, const char* field, float value,
+bool VirtuinoCloud::write(const char* path, const char* field, float value,
                           bool publish, const char* ts) {
-    StaticJsonDocument<256> doc;
-    doc["api_key"]     = _key;
-    doc["device_name"] = device;
-    doc["field"]       = field;
-    doc["value"]       = value;
+    char name[VC_NAME_LEN];
+    _join(name, sizeof(name), path, field);
+    return write(name, value, publish, ts);
+}
+
+bool VirtuinoCloud::write(const char* field, float value, bool publish, const char* ts) {
+    StaticJsonDocument<384> doc;
+    doc["api_key"] = _key;
+    if (_clientId) doc["client_id"] = _clientId;
+    doc["field"]   = field;
+    doc["value"]   = value;
     if (publish) doc["publish"] = true;   // omit key entirely when false
     if (ts)      doc["time"]   = ts;      // omit key when not provided
 
-    char body[256];
+    char body[384];
     serializeJson(doc, body, sizeof(body));
     return _post(body) == 200;
 }
@@ -132,11 +160,12 @@ bool VirtuinoCloud::write(const char* device, const char* field, float value,
 // ═══════════════════════════════════════════════════════════════════════
 //  Block write — beginWrite / add / send
 //  POST /api/data/write
-//  Body: { api_key, device_name [, time], data: [{field, value [, publish]}, ...] }
+//  Body: { api_key, [client_id,] [path,] [time,] data: [{field, value [, publish]}, ...] }
+//  The server joins "path" and each field name with a "/".
 // ═══════════════════════════════════════════════════════════════════════
 
-VirtuinoCloud& VirtuinoCloud::beginWrite(const char* device) {
-    _bDevice  = device;
+VirtuinoCloud& VirtuinoCloud::beginWrite(const char* path) {
+    _bPath    = (path && path[0]) ? path : nullptr;
     _fCount   = 0;
     _bTime[0] = '\0';
     return *this;
@@ -168,13 +197,14 @@ VirtuinoCloud& VirtuinoCloud::add(const char* field, const char* value) {
 }
 
 bool VirtuinoCloud::send() {
-    if (!_bDevice || _fCount == 0) return false;
+    if (_fCount == 0) return false;
 
     // Allocate enough space: base object + each field object
-    DynamicJsonDocument doc(256 + _fCount * 96);
-    doc["api_key"]     = _key;
-    doc["device_name"] = _bDevice;
-    if (_bTime[0]) doc["time"] = _bTime;   // shared timestamp (optional)
+    DynamicJsonDocument doc(320 + _fCount * 112);
+    doc["api_key"] = _key;
+    if (_clientId)  doc["client_id"] = _clientId;
+    if (_bPath)     doc["path"]      = _bPath;
+    if (_bTime[0])  doc["time"]      = _bTime;   // shared timestamp (optional)
 
     JsonArray arr = doc.createNestedArray("data");
     for (int i = 0; i < _fCount; i++) {
@@ -208,19 +238,19 @@ int VirtuinoCloud::_post(const char* body) {
     HTTPClient h;
     h.begin(VC_API_BASE "/api/data/write");
     h.addHeader("Content-Type", "application/json");
-    int code = h.POST((uint8_t*)body, strlen(body));
+    _last = h.POST((uint8_t*)body, strlen(body));
     h.end();
-    return code;
+    return _last;
 }
 
 String VirtuinoCloud::_get(const char* path) {
-    char url[192];
+    char url[VC_NAME_LEN + 72];
     snprintf(url, sizeof(url), VC_API_BASE "%s", path);
     HTTPClient h;
     h.begin(url);
     h.addHeader("x-api-key", _key);   // API key in header for GET requests
-    int code = h.GET();
-    String resp = (code == 200) ? h.getString() : "";
+    _last = h.GET();
+    String resp = (_last == 200) ? h.getString() : "";
     h.end();
     return resp;
 }
@@ -242,21 +272,21 @@ int VirtuinoCloud::_post(const char* body) {
     HTTPClient h;
     h.begin(client, VC_API_BASE "/api/data/write");
     h.addHeader("Content-Type", "application/json");
-    int code = h.POST((uint8_t*)body, strlen(body));
+    _last = h.POST((uint8_t*)body, strlen(body));
     h.end();
-    return code;
+    return _last;
 }
 
 String VirtuinoCloud::_get(const char* path) {
-    char url[192];
+    char url[VC_NAME_LEN + 72];
     snprintf(url, sizeof(url), VC_API_BASE "%s", path);
     WiFiClientSecure client;
     client.setInsecure();
     HTTPClient h;
     h.begin(client, url);
     h.addHeader("x-api-key", _key);
-    int code = h.GET();
-    String resp = (code == 200) ? h.getString() : "";
+    _last = h.GET();
+    String resp = (_last == 200) ? h.getString() : "";
     h.end();
     return resp;
 }
@@ -272,6 +302,8 @@ String VirtuinoCloud::_get(const char* path) {
 //
 //  POST pattern: beginRequest → post → sendHeader(s) → endRequest → print(body)
 //  GET  pattern: beginRequest → get  → sendHeader(s) → endRequest → responseBody()
+//  The response body is ALWAYS read, even on errors, so the connection is
+//  clean for the next request.
 // ═══════════════════════════════════════════════════════════════════════
 #ifdef VC_BOARD_WIFININA
 
@@ -283,7 +315,9 @@ int VirtuinoCloud::_post(const char* body) {
     _vcHTTP.sendHeader("Content-Length", len);
     _vcHTTP.endRequest();
     _vcHTTP.print(body);   // body is sent after the headers
-    return _vcHTTP.responseStatusCode();
+    _last = _vcHTTP.responseStatusCode();
+    _vcHTTP.responseBody();   // drain the reply
+    return _last;
 }
 
 String VirtuinoCloud::_get(const char* path) {
@@ -291,8 +325,9 @@ String VirtuinoCloud::_get(const char* path) {
     _vcHTTP.get(path);
     _vcHTTP.sendHeader("x-api-key", _key);
     _vcHTTP.endRequest();
-    int code = _vcHTTP.responseStatusCode();
-    return (code == 200) ? _vcHTTP.responseBody() : "";
+    _last = _vcHTTP.responseStatusCode();
+    String body = _vcHTTP.responseBody();
+    return (_last == 200) ? body : "";
 }
 
 #endif // VC_BOARD_WIFININA

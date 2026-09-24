@@ -18,3 +18,5 @@ asFloat	KEYWORD2
 asInt	KEYWORD2
 asString	KEYWORD2
 asJson	KEYWORD2
+setClientId	KEYWORD2
+lastStatus	KEYWORD2

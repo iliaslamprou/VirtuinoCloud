@@ -5,16 +5,16 @@
   then parses the array with ArduinoJson to print each entry and
   calculate the average value.
 
-  readHistory() returns a String in this format:
+  readHistory() returns a String in this format (newest first):
     [
-      {"time":"2024-06-15T14:30:00Z","value":"23.4","device":"...","source":"HTTP"},
-      {"time":"2024-06-15T14:29:00Z","value":"23.1","device":"...","source":"HTTP"},
+      {"time":"2024-06-15T14:30:00Z","value":"23.4","source":"HTTP"},
+      {"time":"2024-06-15T14:29:00Z","value":"23.1","source":"HTTP"},
       ...
     ]
   Returns "[]" on network error or if the field has no data yet.
 
   MEMORY NOTE
-    Each record takes ~120 bytes of heap for the JSON document.
+    Each record takes ~100 bytes of heap for the JSON document.
     Keep count ≤ 50 on ESP8266 (limited to ~80 KB free heap).
     ESP32 can handle up to 500+ records comfortably.
     Server maximum: 5000 records.
@@ -29,7 +29,7 @@
     ArduinoHttpClient  (WiFiNINA boards only)
 
   CONSOLE SETUP
-    Device field needed: "temperature"
+    Field needed (Console → Fields): "esp32/temperature"
     Upload some values first (e.g. using Example 01) so history exists.
 */
 
@@ -43,7 +43,6 @@
 const char* SSID     = "YOUR_WIFI_SSID";
 const char* PASSWORD = "YOUR_WIFI_PASSWORD";
 const char* API_KEY  = "YOUR_API_KEY";
-const char* DEVICE   = "YOUR_DEVICE_ID";
 // ─────────────────────────────────────────────────────────────────────────────
 
 VirtuinoCloud cloud(API_KEY);
@@ -60,12 +59,11 @@ void setup() {
 
 void loop() {
     if (!fetched) {
-        // Fetch the last 50 records for field "temperature"
-        // Returns a JSON array String: [{"time":"...","value":"23.4"}, ...]
-        String history = cloud.readHistory(DEVICE, "temperature", 50);
+        // Fetch the last 50 records of the field "esp32/temperature"
+        String history = cloud.readHistory("esp32/temperature", 50);
 
         // Parse the JSON array with ArduinoJson
-        // Allocate enough memory: ~120 bytes × number of records
+        // Allocate enough memory: ~100 bytes × number of records
         DynamicJsonDocument doc(8192);
         DeserializationError err = deserializeJson(doc, history);
 
@@ -80,7 +78,9 @@ void loop() {
                 const char* ts    = rec["time"]   | "unknown";
                 const char* val   = rec["value"]  | "0";
                 const char* src   = rec["source"] | "";
-                Serial.printf("[%2d]  %s  %s  (%s)\n", n, ts, val, src);
+                Serial.print("["); Serial.print(n); Serial.print("]  ");
+                Serial.print(ts);  Serial.print("  ");
+                Serial.print(val); Serial.print("  ("); Serial.print(src); Serial.println(")");
                 sum += atof(val);
                 n++;
             }
@@ -88,7 +88,10 @@ void loop() {
             // Summary
             if (n > 0) {
                 Serial.println("─────────────────────────────────");
-                Serial.printf("Records: %d   Average: %.2f\n", n, sum / n);
+                Serial.print("Records: "); Serial.print(n);
+                Serial.print("   Average: "); Serial.println(sum / n, 2);
+            } else if (cloud.lastStatus() != 200) {
+                Serial.print("Read failed — HTTP "); Serial.println(cloud.lastStatus());
             } else {
                 Serial.println("No records found — upload some data first");
             }
