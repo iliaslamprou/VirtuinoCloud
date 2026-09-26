@@ -37,7 +37,7 @@
  *   Methods that take (path, field) join them with a "/":
  *   cloud.write("esp32", "temperature", 23.4) writes to "esp32/temperature".
  *
- * API KEY: Console → API & Connections
+ * API KEY: Console → Keys & Sub Users
  */
 
 #ifndef VIRTUINO_CLOUD_H
@@ -46,7 +46,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
-#define VIRTUINO_CLOUD_VERSION "1.1.0"
+#define VIRTUINO_CLOUD_VERSION "1.1.1"
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Board detection — selects the correct HTTP backend automatically.
@@ -125,7 +125,7 @@ struct VirtuinoResult {
 
 class VirtuinoCloud {
 public:
-    // apiKey — copy from Console → API & Connections
+    // apiKey — copy from Console → Keys & Sub Users
     explicit VirtuinoCloud(const char* apiKey);
 
     // Optional: a name for this board, e.g. "esp32-kitchen" (1–64 characters
@@ -134,8 +134,9 @@ public:
     void setClientId(const char* clientId);
 
     // HTTP status of the last request: 200 = OK, 404 = no field with that
-    // name, 403 = read-only API key or wrong key, 429 = too many writes,
-    // 0 or negative = no connection. Useful when read() or write() fail.
+    // name (for write/send: at least one field was not stored — create it in
+    // Console → Fields), 403 = read-only API key or wrong key, 429 = too many
+    // writes, 0 or negative = no connection. Useful when read() or write() fail.
     int lastStatus() const { return _last; }
 
     // ── Read ─────────────────────────────────────────────────────────
@@ -160,7 +161,8 @@ public:
 
     // ── Write single field ────────────────────────────────────────────
     //
-    // Upload one field value. Returns true on HTTP 200.
+    // Upload one field value. Returns true only when the server stored it —
+    // false on no connection, an error, or a field that does not exist.
     //
     // publish  — if true, the value is also pushed to the MQTT broker
     //            so live dashboard widgets update immediately (Essential+ plan).
@@ -203,7 +205,8 @@ public:
     // for all fields in this block instead of adding a data field.
     VirtuinoCloud& add(const char* field, const char* value);
 
-    // Send all queued fields in one HTTP POST. Returns true on HTTP 200.
+    // Send all queued fields in one HTTP POST. Returns true only when EVERY
+    // field was stored; false if even one does not exist (the others are stored).
     // Resets the field list so beginWrite() can be called again next loop.
     bool send();
 
@@ -233,6 +236,11 @@ private:
     // path = "/api/data/field/esp32/temperature?..."  (no host, no scheme)
     int    _post(const char* body);
     String _get(const char* path);
+
+    // A write answers 200 even when a field does not exist — it is listed in
+    // "skipped_fields" and "count" is lower than "total". This turns such an
+    // answer into 404, so write()/send() return false and lastStatus() says why.
+    int    _writeResult(int status, const String& resp);
 };
 
 #endif // VIRTUINO_CLOUD_H

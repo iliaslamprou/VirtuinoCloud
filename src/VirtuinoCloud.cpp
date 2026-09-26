@@ -228,6 +228,29 @@ bool VirtuinoCloud::send() {
 
 
 // ═══════════════════════════════════════════════════════════════════════
+//  _writeResult()
+//  The server answers a write with 200 even when a field does not exist:
+//  { "success": true, "count": 1, "total": 2, "skipped_fields": [...] }
+//  Reporting that as success would let a sketch delete a reading that was
+//  never stored. So: count < total  →  404 ("no field with that name").
+//  An answer that cannot be read keeps its HTTP status.
+// ═══════════════════════════════════════════════════════════════════════
+
+int VirtuinoCloud::_writeResult(int status, const String& resp) {
+    if (status != 200 || resp.length() == 0) return status;
+    StaticJsonDocument<64> filter;
+    filter["count"] = true;
+    filter["total"] = true;
+    StaticJsonDocument<96> doc;
+    if (deserializeJson(doc, resp, DeserializationOption::Filter(filter))) return status;
+    int count = doc["count"] | -1;
+    int total = doc["total"] | -1;
+    if (count >= 0 && total >= 0 && count < total) return 404;
+    return status;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
 //  HTTP backend — ESP32
 //  Uses the HTTPClient bundled with the ESP32 Arduino core.
 //  TLS is handled transparently by the underlying mbedTLS stack.
@@ -239,7 +262,9 @@ int VirtuinoCloud::_post(const char* body) {
     h.begin(VC_API_BASE "/api/data/write");
     h.addHeader("Content-Type", "application/json");
     _last = h.POST((uint8_t*)body, strlen(body));
+    String resp = (_last == 200) ? h.getString() : "";
     h.end();
+    _last = _writeResult(_last, resp);
     return _last;
 }
 
@@ -273,7 +298,9 @@ int VirtuinoCloud::_post(const char* body) {
     h.begin(client, VC_API_BASE "/api/data/write");
     h.addHeader("Content-Type", "application/json");
     _last = h.POST((uint8_t*)body, strlen(body));
+    String resp = (_last == 200) ? h.getString() : "";
     h.end();
+    _last = _writeResult(_last, resp);
     return _last;
 }
 
@@ -316,7 +343,8 @@ int VirtuinoCloud::_post(const char* body) {
     _vcHTTP.endRequest();
     _vcHTTP.print(body);   // body is sent after the headers
     _last = _vcHTTP.responseStatusCode();
-    _vcHTTP.responseBody();   // drain the reply
+    String resp = _vcHTTP.responseBody();   // always read — keeps the connection clean
+    _last = _writeResult(_last, resp);
     return _last;
 }
 

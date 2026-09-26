@@ -146,7 +146,8 @@ cloud.setClientId("esp32-kitchen");   // name shown in My Virtuino World (1–64
 
 if (!cloud.write("esp32/temperature", 23.4)) {
     Serial.println(cloud.lastStatus());
-    // 404 = no field with that name   403 = read-only or wrong API key
+    // 404 = a field was not stored — create it in Console → Fields
+    // 403 = read-only or wrong API key
     // 429 = too many writes            0 or negative = no connection
 }
 ```
@@ -170,13 +171,17 @@ if (!cloud.write("esp32/temperature", 23.4)) {
 Before uploading any sketch:
 1. Log in at [virtuino.com](https://virtuino.com)
 2. **Console → Fields** — create the fields your sketch uses, with their full names (e.g. `esp32/temperature`)
-3. **Console → API & Connections** — copy your API key (it must be **Read & Write** to upload values)
+3. **Console → Keys & Sub Users** — copy your API key (it must be **Read & Write** to upload values)
 
 The **Debug Monitor** in the Console shows every request your board makes, live — including the reason when one is rejected.
 
 ---
 
 ## Changes
+
+**1.1.1**
+- `write()` and `send()` return `true` only when the server actually stored the values. A field that does not exist used to count as success (the server answers 200 and lists it in `skipped_fields`); now they return `false` and `lastStatus()` is `404`. Important for store-and-forward sketches, which delete a reading once it is sent.
+- `send()`: if one field of the block does not exist, the others are still stored and `send()` returns `false`.
 
 **1.1.0**
 - Full field names everywhere: `write("esp32/temperature", …)`, `read("esp32/relay1")`, `readHistory("esp32/temperature", n)`, `beginWrite()` with an optional path.

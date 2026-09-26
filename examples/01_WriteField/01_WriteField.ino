@@ -16,7 +16,7 @@
   CONSOLE SETUP  (do this before uploading)
     1. Log in at virtuino.com
     2. Console → Fields → create a field named "esp32/temperature"
-    3. Console → API & Connections → copy your API key
+    3. Console → Keys & Sub Users → copy your API key
     4. Fill in SSID, PASSWORD and API_KEY below
 */
 
@@ -28,7 +28,7 @@
 // ── Credentials — fill these in ──────────────────────────────────────────────
 const char* SSID     = "YOUR_WIFI_SSID";
 const char* PASSWORD = "YOUR_WIFI_PASSWORD";
-const char* API_KEY  = "YOUR_API_KEY";    // Console → API & Connections
+const char* API_KEY  = "YOUR_API_KEY";    // Console → Keys & Sub Users
 // ─────────────────────────────────────────────────────────────────────────────
 
 VirtuinoCloud cloud(API_KEY);
